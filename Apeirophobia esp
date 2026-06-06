@@ -1,0 +1,234 @@
+
+
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local camera      = workspace.CurrentCamera
+local localPlayer = Players.LocalPlayer
+
+-- Registry to track all ESP targets for distance sorting
+local espTargets = {}
+
+-- ============================================================
+--  Config
+-- ============================================================
+local CFG = {
+    MonsterOutline          = Color3.fromRGB(255, 0, 0),
+    MonsterFill             = Color3.fromRGB(255, 0, 0),
+    MonsterFillTransparency = 0.7,
+
+    KeyOutline          = Color3.fromRGB(0, 255, 0),
+    KeyFill             = Color3.fromRGB(0, 255, 0),
+    KeyFillTransparency = 0.5,
+
+    ExitOutline          = Color3.fromRGB(0, 200, 255),
+    ExitFill             = Color3.fromRGB(0, 200, 255),
+    ExitFillTransparency = 0.5,
+
+    ValveOutline          = Color3.fromRGB(0, 100, 255),
+    ValveFill             = Color3.fromRGB(0, 100, 255),
+    ValveFillTransparency = 0.3,
+
+    LabelSize = UDim2.new(0, 100, 0, 40),
+}
+
+-- ============================================================
+--  Helper
+-- ============================================================
+local function applyESP(obj, outlineColor, fillColor, fillTransparency, labelText, labelColor, isMonster)
+    -- Create Highlight (Disabled by default, manager will enable it)
+    local hl = Instance.new("Highlight")
+    hl.Name                = "_ESPHighlight"
+    hl.Adornee             = obj
+    hl.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.OutlineColor        = outlineColor
+    hl.FillColor           = fillColor
+    hl.FillTransparency    = fillTransparency
+    hl.OutlineTransparency = 0
+    hl.Enabled             = false 
+    hl.Parent              = obj
+
+    -- Create Billboard
+    local bb = Instance.new("BillboardGui")
+    bb.Name        = "_ESPBillboard"
+    bb.AlwaysOnTop = true
+    bb.Size        = CFG.LabelSize
+    bb.StudsOffset = Vector3.new(0, 3, 0)
+    bb.Parent      = obj
+
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Size        = UDim2.new(1, 0, 1, 0)
+    lbl.Text        = labelText or obj.Name
+    lbl.TextColor3  = labelColor or Color3.new(1, 1, 1)
+    lbl.TextScaled  = true
+    lbl.Font        = Enum.Font.GothamBold
+    lbl.TextStrokeTransparency = 0.5
+    lbl.Parent      = bb
+
+    -- Register object
+    table.insert(espTargets, {
+        Instance  = obj,
+        Highlight = hl,
+        Billboard = bb,
+        Label     = lbl,
+        IsMonster = isMonster,
+        BaseName  = labelText or obj.Name,
+        Distance  = math.huge
+    })
+end
+
+local function removeESP(obj)
+    for _, child in ipairs(obj:GetChildren()) do
+        if child.Name == "_ESPHighlight" or child.Name == "_ESPBillboard" then
+            child:Destroy()
+        end
+    end
+end
+
+local function hasESP(obj)
+    return obj:FindFirstChild("_ESPHighlight") ~= nil
+end
+
+-- ============================================================
+--  Monster ESP
+-- ============================================================
+local function setupMonsterESP()
+    local entities = workspace:FindFirstChild("Entities")
+    if not entities then warn("[ESP] workspace.Entities not found") return end
+
+    local function addMonster(obj)
+        if obj:IsA("Model") and not hasESP(obj) then
+            applyESP(obj, CFG.MonsterOutline, CFG.MonsterFill, CFG.MonsterFillTransparency, obj.Name, Color3.fromRGB(255, 80, 80), true)
+        end
+    end
+
+    for _, obj in ipairs(entities:GetChildren()) do addMonster(obj) end
+    entities.ChildAdded:Connect(function(obj) task.wait(0.1) addMonster(obj) end)
+    entities.ChildRemoved:Connect(function(obj) removeESP(obj) end)
+
+    print("[ESP] Monster ESP active")
+end
+
+-- ============================================================
+--  Key ESP
+-- ============================================================
+local function setupKeyESP()
+    local interacts = workspace:FindFirstChild("Ignored") and workspace.Ignored:FindFirstChild("Interacts")
+    if not interacts then warn("[ESP] workspace.Ignored.Interacts not found") return end
+
+    local function addKey(obj)
+        if obj.Name == "key" and not hasESP(obj) then
+            applyESP(obj, CFG.KeyOutline, CFG.KeyFill, CFG.KeyFillTransparency, "KEY", Color3.fromRGB(0, 255, 0), false)
+        end
+    end
+
+    for _, obj in ipairs(interacts:GetDescendants()) do addKey(obj) end
+    interacts.DescendantAdded:Connect(function(obj) task.wait(0.1) addKey(obj) end)
+
+    print("[ESP] Key ESP active")
+end
+
+-- ============================================================
+--  Exit ESP
+-- ============================================================
+local function setupExitESP()
+    local ok, spawns = pcall(function() return workspace.Buildings["0"].Exits.Spawns end)
+    if not ok or not spawns then warn("[ESP] Exit Spawns not found") return end
+
+    local function addExit(obj)
+        if not hasESP(obj) then
+            applyESP(obj, CFG.ExitOutline, CFG.ExitFill, CFG.ExitFillTransparency, "EXIT", Color3.fromRGB(0, 200, 255), false)
+        end
+    end
+
+    for _, obj in ipairs(spawns:GetDescendants()) do
+        if obj:IsA("BasePart") or obj:IsA("Model") then addExit(obj) end
+    end
+    spawns.DescendantAdded:Connect(function(obj)
+        task.wait(0.1)
+        if obj:IsA("BasePart") or obj:IsA("Model") then addExit(obj) end
+    end)
+
+    print("[ESP] Exit ESP active")
+end
+
+-- ============================================================
+--  Valve ESP
+-- ============================================================
+local function setupValveESP()
+    local interacts = workspace:FindFirstChild("Ignored") and workspace.Ignored:FindFirstChild("Interacts")
+    if not interacts then warn("[ESP] workspace.Ignored.Interacts not found") return end
+
+    local function addValve(obj)
+        if obj.Name == "valve" and obj:IsA("MeshPart") and not hasESP(obj) then
+            applyESP(obj, CFG.ValveOutline, CFG.ValveFill, CFG.ValveFillTransparency, "VALVE", Color3.fromRGB(0, 150, 255), false)
+        end
+    end
+
+    for _, obj in ipairs(interacts:GetDescendants()) do addValve(obj) end
+    interacts.DescendantAdded:Connect(function(obj) task.wait(0.1) addValve(obj) end)
+
+    print("[ESP] Valve ESP active")
+end
+
+-- ============================================================
+--  Dynamic Highlight Manager & Distance Updater
+-- ============================================================
+RunService.RenderStepped:Connect(function()
+    local char = localPlayer.Character
+    local hrp  = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    local validTargets = {}
+
+    -- 1. Calculate distances and clean up destroyed objects
+    for _, data in ipairs(espTargets) do
+        if data.Instance and data.Instance.Parent then
+            local root = data.Instance
+            if data.Instance:IsA("Model") then
+                root = data.Instance.PrimaryPart or data.Instance:FindFirstChildWhichIsA("BasePart") or data.Instance
+            end
+            
+            if root:IsA("BasePart") then
+                data.Distance = math.floor((hrp.Position - root.Position).Magnitude)
+                
+                -- Update Monster distance text
+                if data.IsMonster and data.Label then
+                    data.Label.Text = data.BaseName .. "\n" .. data.Distance .. " studs"
+                end
+                
+                table.insert(validTargets, data)
+            end
+        end
+    end
+
+    -- Update our registry to only include items that still exist
+    espTargets = validTargets
+
+    -- 2. Sort targets by distance (closest first)
+    table.sort(espTargets, function(a, b)
+        return a.Distance < b.Distance
+    end)
+
+    -- 3. Enable Highlights for the closest 30, disable the rest
+    for i, data in ipairs(espTargets) do
+        if data.Highlight then
+            if i <= 30 then
+                data.Highlight.Enabled = true
+            else
+                data.Highlight.Enabled = false
+            end
+        end
+    end
+end)
+
+-- ============================================================
+--  Init
+-- ============================================================
+setupMonsterESP()
+setupKeyESP()
+setupExitESP()
+setupValveESP()
+
+
